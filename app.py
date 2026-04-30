@@ -20,9 +20,21 @@ except Exception:
     PdfReader = None
 
 try:
-    from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        precision_score,
+        recall_score,
+        f1_score,
+        roc_auc_score,
+    )
 except Exception:
-    accuracy_score = balanced_accuracy_score = precision_score = recall_score = f1_score = roc_auc_score = confusion_matrix = None
+    accuracy_score = None
+    balanced_accuracy_score = None
+    precision_score = None
+    recall_score = None
+    f1_score = None
+    roc_auc_score = None
 
 
 # =========================================================
@@ -157,14 +169,14 @@ def get_model_features(model, json_features, df: pd.DataFrame):
         return list(model.feature_names_in_)
 
     if json_features and isinstance(json_features, list):
-        # If features.json came from the final one-hot matrix, use it directly.
-        # If it came from a short hand-written list, this still works for fallback demos.
         return json_features
 
-    # Fallback: build a reasonable feature set from current dataset columns.
     sector_dummies = []
     if "sector" in df.columns:
-        sector_dummies = [f"sector_{s}" for s in sorted(df["sector"].dropna().unique())][1:]
+        sectors = sorted(df["sector"].dropna().unique())
+        if len(sectors) > 1:
+            sector_dummies = [f"sector_{s}" for s in sectors[1:]]
+
     return [f for f in BASE_NUMERIC_FEATURES if f in df.columns] + sector_dummies
 
 
@@ -218,13 +230,12 @@ def count_terms(text: str, terms: list[str]) -> int:
 def build_transcript_features(text: str) -> dict:
     """
     Lightweight transcript feature extractor for the deployed app.
-    In the notebook, FinBERT created the training features from PDF transcripts.
-    In the app, users can paste text or upload a PDF/TXT; this function converts the text into a compatible feature row.
+    The notebook uses the original training pipeline; this app converts pasted/uploaded text
+    into a compatible feature row for prediction.
     """
     sentences = split_sentences(text)
     word_tokens = re.findall(r"\b[a-zA-Z]+\b", text.lower())
     word_count = max(len(word_tokens), 1)
-    sentence_count = max(len(sentences), 1)
 
     sentence_labels = []
     for sentence in sentences:
@@ -265,7 +276,7 @@ def build_transcript_features(text: str) -> dict:
         "uncertainty_rate": uncertainty_count / word_count,
         "risk_language_rate": risk_count / word_count,
         "word_count": word_count,
-        "sentence_count": sentence_count,
+        "sentence_count": n,
     }
 
 
@@ -297,6 +308,7 @@ def get_pre_event_abnormal_returns(ticker: str, call_date, lookback_days: int = 
         common = stock.index.intersection(spy.index)
         stock = stock.loc[common]
         spy = spy.loc[common]
+
         base_idx = stock.index.searchsorted(call_date)
         base_idx = min(max(base_idx, 1), len(stock) - 1)
 
@@ -377,6 +389,7 @@ def probability_label(prob: float):
 def make_sentiment_gauge(score: float):
     """Gauge-style sentiment display with a marker at the score instead of a filled bar from -1."""
     score = float(np.clip(score, -1, 1))
+
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
@@ -388,23 +401,20 @@ def make_sentiment_gauge(score: float):
                 "bar": {"color": "rgba(0,0,0,0)", "thickness": 0.01},
                 "steps": [
                     {"range": [-1, -0.15], "color": "#f7c9c9"},
-                    def make_sentiment_pie(features: dict):
-    fig = go.Figure(
-        go.Pie(
-            labels=["Positive", "Negative", "Neutral"],
-            values=[features.get("pct_positive", 0), features.get("pct_negative", 0), features.get("pct_neutral", 0)],
-            hole=0.45,
-            marker={"colors": ["#0b6fc6", "#ff4b4b", "#7fc7ff"]},  # Positive dark blue, Negative red, Neutral light blue
-            textinfo="percent",
-            sort=False,
+                    {"range": [-0.15, 0.15], "color": "#fff0b3"},
+                    {"range": [0.15, 1], "color": "#cfe8da"},
+                ],
+                "threshold": {
+                    "line": {"color": "#1f2937", "width": 5},
+                    "thickness": 0.9,
+                    "value": score,
+                },
+            },
         )
     )
-    fig.update_layout(
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20),
-        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
-    )
-    return figx=0.5,
+
+    fig.add_annotation(
+        x=0.5,
         y=0.03,
         text="Negative  ←  Neutral  →  Positive",
         showarrow=False,
@@ -412,6 +422,7 @@ def make_sentiment_gauge(score: float):
         yref="paper",
         font={"size": 13, "color": "#6b7280"},
     )
+
     fig.update_layout(height=310, margin=dict(l=20, r=20, t=45, b=25))
     return fig
 
@@ -420,11 +431,29 @@ def make_sentiment_pie(features: dict):
     fig = go.Figure(
         go.Pie(
             labels=["Positive", "Negative", "Neutral"],
-            values=[features.get("pct_positive", 0), features.get("pct_negative", 0), features.get("pct_neutral", 0)],
+            values=[
+                features.get("pct_positive", 0),
+                features.get("pct_negative", 0),
+                features.get("pct_neutral", 0),
+            ],
             hole=0.45,
+            marker={"colors": ["#0b6fc6", "#ff4b4b", "#7fc7ff"]},
+            textinfo="percent",
+            sort=False,
         )
     )
-    fig.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20))
+
+    fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.02,
+        ),
+    )
     return fig
 
 
@@ -460,9 +489,9 @@ available_model_names = [name for name, m in models.items() if m is not None]
 if not available_model_names:
     available_model_names = ["XGBoost"]
 
-# Prefer XGBoost if available for feature inference.
 reference_model = models.get("XGBoost") or models.get("Random Forest") or models.get("Logistic Regression")
 model_features = get_model_features(reference_model, json_features, df)
+
 
 # =========================================================
 # Sidebar
@@ -480,13 +509,13 @@ st.sidebar.markdown("### Historical Analysis Controls")
 selected_ticker = st.sidebar.selectbox(
     "Company for historical view",
     ticker_options,
-    help="Used as the default company in the historical charts and company tracker."
+    help="Used as the default company in the historical charts and company tracker.",
 )
 selected_window = st.sidebar.selectbox(
     "Historical return window",
     [w for w in ["CAR+5", "CAR+10", "CAR+1", "CAR+3"] if df.empty or w in df.columns],
     index=0,
-    help="Controls the return window shown in historical backtesting charts. This does not change the prediction target."
+    help="Controls the return window shown in historical backtesting charts. This does not change the prediction target.",
 )
 
 st.sidebar.markdown("### Prediction Controls")
@@ -494,7 +523,7 @@ selected_model_name = st.sidebar.selectbox(
     "Prediction model",
     available_model_names,
     index=0,
-    help="Used only when analyzing a new uploaded or pasted transcript."
+    help="Used only when analyzing a new uploaded or pasted transcript.",
 )
 st.sidebar.caption("Prediction target: Positive CAR+5")
 
@@ -504,6 +533,7 @@ st.sidebar.write(f"XGBoost: {'✅' if models.get('XGBoost') is not None else '�
 st.sidebar.write(f"Random Forest: {'✅' if models.get('Random Forest') is not None else '—'}")
 st.sidebar.write(f"Logistic Regression: {'✅' if models.get('Logistic Regression') is not None else '—'}")
 st.sidebar.write(f"Features loaded: {len(model_features)}")
+
 
 # =========================================================
 # Header
@@ -516,6 +546,7 @@ st.markdown(
 if df.empty:
     st.error("Could not find `data/master_dataset.csv`. Please check your GitHub file path.")
     st.stop()
+
 
 # =========================================================
 # Top KPIs
@@ -534,6 +565,7 @@ k4.metric("Positive CAR+5 Rate", format_pct(positive_rate))
 with st.expander("View dataset preview", expanded=False):
     st.dataframe(df.head(20), use_container_width=True)
 
+
 # =========================================================
 # Tabs
 # =========================================================
@@ -543,6 +575,7 @@ tab_home, tab_predict, tab_backtest, tab_tracker = st.tabs([
     "Historical Backtesting",
     "Company Tracker",
 ])
+
 
 # =========================================================
 # Home
@@ -565,7 +598,17 @@ with tab_home:
             "5. Compare the prediction with historical backtesting evidence."
         )
     with c2:
-        available_cols = [c for c in ["sentiment_score", "pct_positive", "pct_negative", "uncertainty_rate", "risk_language_rate", selected_window] if c in df.columns]
+        available_cols = [
+            c for c in [
+                "sentiment_score",
+                "pct_positive",
+                "pct_negative",
+                "uncertainty_rate",
+                "risk_language_rate",
+                selected_window,
+            ]
+            if c in df.columns
+        ]
         if available_cols:
             summary = df[available_cols].describe().T[["mean", "std", "min", "max"]]
             st.markdown("#### Historical feature summary")
@@ -575,6 +618,7 @@ with tab_home:
         "For the real-time analyzer, PDF upload is supported, but pasting transcript text is usually the most stable option. "
         "The original training pipeline used PDF transcripts; the deployed app only needs the extracted transcript text."
     )
+
 
 # =========================================================
 # Analyze New Transcript
@@ -587,12 +631,16 @@ with tab_predict:
 
     with setting_col:
         user_ticker = st.text_input("Ticker", value=selected_ticker)
-        user_sector = st.selectbox("Sector", sector_options, index=sector_options.index("Technology") if "Technology" in sector_options else 0)
+        user_sector = st.selectbox(
+            "Sector",
+            sector_options,
+            index=sector_options.index("Technology") if "Technology" in sector_options else 0,
+        )
         call_date = st.date_input("Earnings call date")
         use_market_features = st.checkbox(
             "Estimate pre-call market features with yfinance",
             value=True,
-            help="If checked, the app estimates CAR-1, CAR-5, and CAR-10 automatically using yfinance. If unchecked, the app uses the manual values below."
+            help="If checked, the app estimates CAR-1, CAR-5, and CAR-10 automatically using yfinance. If unchecked, the app uses the manual values below.",
         )
         st.caption(
             "Checked: auto-estimate CAR-1/CAR-5/CAR-10 from ticker and call date.  "
@@ -604,7 +652,9 @@ with tab_predict:
             manual_car5 = st.number_input("Manual CAR-5", value=0.0, step=0.01, format="%.4f")
             manual_car10 = st.number_input("Manual CAR-10", value=0.0, step=0.01, format="%.4f")
         else:
-            manual_car1 = manual_car5 = manual_car10 = 0.0
+            manual_car1 = 0.0
+            manual_car5 = 0.0
+            manual_car10 = 0.0
 
     with input_col:
         uploaded = st.file_uploader("Upload transcript file (PDF or TXT)", type=["pdf", "txt"])
@@ -632,7 +682,14 @@ with tab_predict:
                     market_features = {"CAR-1": manual_car1, "CAR-5": manual_car5, "CAR-10": manual_car10}
 
                 full_features = {**transcript_features, **market_features}
-                prob, err = predict_with_model(selected_model_name, models, scaler, full_features, user_sector, model_features)
+                prob, err = predict_with_model(
+                    selected_model_name,
+                    models,
+                    scaler,
+                    full_features,
+                    user_sector,
+                    model_features,
+                )
 
             st.markdown("### Transcript Sentiment Signals")
             m1, m2, m3, m4 = st.columns(4)
@@ -669,6 +726,7 @@ with tab_predict:
                 feature_df = pd.DataFrame([full_features]).T.reset_index()
                 feature_df.columns = ["feature", "value"]
                 st.dataframe(feature_df, use_container_width=True)
+
 
 # =========================================================
 # Historical Backtesting
@@ -715,19 +773,23 @@ with tab_backtest:
         for name, model in models.items():
             if model is None:
                 continue
+
             features_for_model = get_model_features(model, json_features, df)
-            X_eval = pd.concat(
-                [build_model_row(row.to_dict(), row.get("sector", "Unknown"), features_for_model) for _, row in filtered.iterrows()],
-                ignore_index=True,
-            )
+            rows = []
+            for _, row in filtered.iterrows():
+                rows.append(build_model_row(row.to_dict(), row.get("sector", "Unknown"), features_for_model))
+            X_eval = pd.concat(rows, ignore_index=True)
             y_true = filtered["label"].astype(int)
+
             try:
                 if name == "Logistic Regression" and scaler is not None:
                     X_model = scaler.transform(X_eval)
                 else:
                     X_model = X_eval
+
                 y_prob = model.predict_proba(X_model)[:, 1]
                 y_pred = (y_prob >= 0.5).astype(int)
+
                 perf_rows.append({
                     "Model": name,
                     "Accuracy": accuracy_score(y_true, y_pred) if accuracy_score else np.nan,
@@ -742,12 +804,14 @@ with tab_backtest:
 
         if perf_rows:
             perf_df = pd.DataFrame(perf_rows)
-            st.dataframe(perf_df.style.format({c: "{:.3f}" for c in perf_df.columns if c != "Model"}), use_container_width=True)
+            st.dataframe(
+                perf_df.style.format({c: "{:.3f}" for c in perf_df.columns if c != "Model"}),
+                use_container_width=True,
+            )
             st.caption("Displayed metrics are calculated on the available historical app dataset and are mainly for dashboard interpretation.")
         else:
             st.info("Model performance could not be calculated. Check whether features.json matches the saved models.")
 
-    # Feature importance
     xgb_model = models.get("XGBoost")
     if xgb_model is not None and hasattr(xgb_model, "feature_importances_"):
         feat_names = get_model_features(xgb_model, json_features, df)
@@ -756,6 +820,7 @@ with tab_backtest:
         fig_imp = px.bar(importance, x="importance", y="feature", orientation="h", title="XGBoost Feature Importance")
         fig_imp.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig_imp, use_container_width=True)
+
 
 # =========================================================
 # Company Tracker
@@ -772,7 +837,7 @@ with tab_tracker:
     tracker = df[df["ticker"].isin(tracker_tickers)].copy() if "ticker" in df.columns else df.copy()
     date_col = "date" if "date" in tracker.columns else "call_date"
 
-    if not tracker.empty and date_col in tracker.columns:
+    if not tracker.empty and date_col in tracker.columns and "sentiment_score" in tracker.columns:
         fig_trend = px.line(
             tracker.sort_values(date_col),
             x=date_col,
@@ -784,23 +849,36 @@ with tab_tracker:
         fig_trend.add_hline(y=0, line_dash="dash")
         st.plotly_chart(fig_trend, use_container_width=True)
 
-    heatmap_metric = st.selectbox(
-        "Heatmap metric",
-        [c for c in ["sentiment_score", "pct_positive", "pct_negative", "uncertainty_rate", "risk_language_rate", "CAR+5", "CAR+10"] if c in tracker.columns],
-    )
+    heatmap_options = [
+        c for c in [
+            "sentiment_score",
+            "pct_positive",
+            "pct_negative",
+            "uncertainty_rate",
+            "risk_language_rate",
+            "CAR+5",
+            "CAR+10",
+        ]
+        if c in tracker.columns
+    ]
 
-    if "quarter" in tracker.columns and heatmap_metric:
-        pivot = tracker.pivot_table(index="ticker", columns="quarter", values=heatmap_metric, aggfunc="mean")
-        fig_heat = px.imshow(
-            pivot,
-            aspect="auto",
-            title=f"Quarterly Heatmap: {heatmap_metric}",
-            labels={"x": "Quarter", "y": "Ticker", "color": heatmap_metric},
-        )
-        st.plotly_chart(fig_heat, use_container_width=True)
+    if heatmap_options:
+        heatmap_metric = st.selectbox("Heatmap metric", heatmap_options)
+        if "quarter" in tracker.columns:
+            pivot = tracker.pivot_table(index="ticker", columns="quarter", values=heatmap_metric, aggfunc="mean")
+            fig_heat = px.imshow(
+                pivot,
+                aspect="auto",
+                title=f"Quarterly Heatmap: {heatmap_metric}",
+                labels={"x": "Quarter", "y": "Ticker", "color": heatmap_metric},
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
 
     with st.expander("View selected company data"):
         st.dataframe(tracker, use_container_width=True)
 
+
 st.markdown("---")
-st.caption("BA870/AC820 Financial Analytics Streamlit prototype. Training data and model artifacts are produced in the project notebook; this app loads the exported dataset and model files from GitHub.")
+st.caption(
+    "BA870/AC820 Financial Analytics Streamlit prototype. Training data and model artifacts are produced in the project notebook; this app loads the exported dataset and model files from GitHub."
+)
