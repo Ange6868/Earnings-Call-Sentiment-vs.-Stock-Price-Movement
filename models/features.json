@@ -1,1 +1,1 @@
-["pct_positive", "pct_negative", "pct_neutral", "sentiment_score", "uncertainty_rate"]
+["pct_positive", "pct_negative", "pct_neutral", "sentiment_score", "non_neutral_rate", "pos_to_neg_ratio", "neutral_adjusted_score", "sentiment_score_neg2", "sentiment_score_neg3", "uncertainty_rate", "risk_language_rate", "CAR-1", "CAR-5", "CAR-10", "sector_Energy", "sector_Financial", "sector_Healthcare", "sector_Industrial", "sector_Technology", "sector_Telecom"]
