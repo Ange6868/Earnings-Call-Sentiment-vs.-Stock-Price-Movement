@@ -5,3 +5,4 @@ plotly
 yfinance
 scikit-learn
 xgboost
+statsmodels
