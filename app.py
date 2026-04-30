@@ -375,24 +375,44 @@ def probability_label(prob: float):
 
 
 def make_sentiment_gauge(score: float):
+    """Gauge-style sentiment display with a marker at the score instead of a filled bar from -1."""
+    score = float(np.clip(score, -1, 1))
     fig = go.Figure(
         go.Indicator(
             mode="gauge+number",
             value=score,
-            number={"valueformat": ".3f"},
-            title={"text": "Sentiment Score"},
+            number={"valueformat": ".3f", "font": {"size": 58}},
+            title={"text": "Sentiment Score", "font": {"size": 22}},
             gauge={
-                "axis": {"range": [-1, 1]},
-                "bar": {"thickness": 0.35},
+                "axis": {"range": [-1, 1], "tickvals": [-1, -0.5, 0, 0.5, 1]},
+                "bar": {"color": "rgba(0,0,0,0)", "thickness": 0.01},
                 "steps": [
-                    {"range": [-1, -0.15], "color": "#f8d7da"},
-                    {"range": [-0.15, 0.15], "color": "#fff3cd"},
-                    {"range": [0.15, 1], "color": "#d1e7dd"},
-                ],
-            },
+                    {"range": [-1, -0.15], "color": "#f7c9c9"},
+                    def make_sentiment_pie(features: dict):
+    fig = go.Figure(
+        go.Pie(
+            labels=["Positive", "Negative", "Neutral"],
+            values=[features.get("pct_positive", 0), features.get("pct_negative", 0), features.get("pct_neutral", 0)],
+            hole=0.45,
+            marker={"colors": ["#0b6fc6", "#ff4b4b", "#7fc7ff"]},  # Positive dark blue, Negative red, Neutral light blue
+            textinfo="percent",
+            sort=False,
         )
     )
-    fig.update_layout(height=300, margin=dict(l=20, r=20, t=40, b=20))
+    fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
+    )
+    return figx=0.5,
+        y=0.03,
+        text="Negative  ←  Neutral  →  Positive",
+        showarrow=False,
+        xref="paper",
+        yref="paper",
+        font={"size": 13, "color": "#6b7280"},
+    )
+    fig.update_layout(height=310, margin=dict(l=20, r=20, t=45, b=25))
     return fig
 
 
@@ -412,6 +432,22 @@ def format_pct(x):
     if pd.isna(x):
         return "N/A"
     return f"{x:.2%}"
+
+
+def prediction_card(label: str, value: str, helper: str | None = None):
+    helper_html = f"<div style='font-size:0.85rem;color:#6b7280;margin-top:0.25rem;'>{helper}</div>" if helper else ""
+    st.markdown(
+        f"""
+        <div style="border:1px solid #e5e7eb;border-radius:14px;padding:18px 20px;background:#ffffff;min-height:120px;">
+            <div style="font-size:0.95rem;color:#4b5563;margin-bottom:0.55rem;">{label}</div>
+            <div style="font-size:1.75rem;font-weight:650;color:#1f2937;line-height:1.15;white-space:normal;word-break:normal;">
+                {value}
+            </div>
+            {helper_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # =========================================================
@@ -440,9 +476,27 @@ else:
     ticker_options = sorted(df["ticker"].dropna().unique()) if "ticker" in df.columns else ["AAPL", "MSFT", "NVDA"]
     sector_options = sorted(df["sector"].dropna().unique()) if "sector" in df.columns else ["Unknown"]
 
-selected_ticker = st.sidebar.selectbox("Select company for historical view", ticker_options)
-selected_window = st.sidebar.selectbox("Return window", [w for w in ["CAR+5", "CAR+10", "CAR+1", "CAR+3"] if df.empty or w in df.columns], index=0)
-selected_model_name = st.sidebar.selectbox("Prediction model", available_model_names, index=0)
+st.sidebar.markdown("### Historical Analysis Controls")
+selected_ticker = st.sidebar.selectbox(
+    "Company for historical view",
+    ticker_options,
+    help="Used as the default company in the historical charts and company tracker."
+)
+selected_window = st.sidebar.selectbox(
+    "Historical return window",
+    [w for w in ["CAR+5", "CAR+10", "CAR+1", "CAR+3"] if df.empty or w in df.columns],
+    index=0,
+    help="Controls the return window shown in historical backtesting charts. This does not change the prediction target."
+)
+
+st.sidebar.markdown("### Prediction Controls")
+selected_model_name = st.sidebar.selectbox(
+    "Prediction model",
+    available_model_names,
+    index=0,
+    help="Used only when analyzing a new uploaded or pasted transcript."
+)
+st.sidebar.caption("Prediction target: Positive CAR+5")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Model files")
@@ -535,10 +589,22 @@ with tab_predict:
         user_ticker = st.text_input("Ticker", value=selected_ticker)
         user_sector = st.selectbox("Sector", sector_options, index=sector_options.index("Technology") if "Technology" in sector_options else 0)
         call_date = st.date_input("Earnings call date")
-        use_market_features = st.checkbox("Estimate pre-call market features with yfinance", value=False)
-        manual_car1 = st.number_input("CAR-1", value=0.0, step=0.01, format="%.4f")
-        manual_car5 = st.number_input("CAR-5", value=0.0, step=0.01, format="%.4f")
-        manual_car10 = st.number_input("CAR-10", value=0.0, step=0.01, format="%.4f")
+        use_market_features = st.checkbox(
+            "Estimate pre-call market features with yfinance",
+            value=True,
+            help="If checked, the app estimates CAR-1, CAR-5, and CAR-10 automatically using yfinance. If unchecked, the app uses the manual values below."
+        )
+        st.caption(
+            "Checked: auto-estimate CAR-1/CAR-5/CAR-10 from ticker and call date.  "
+            "Unchecked: manually enter pre-call CAR values."
+        )
+
+        if not use_market_features:
+            manual_car1 = st.number_input("Manual CAR-1", value=0.0, step=0.01, format="%.4f")
+            manual_car5 = st.number_input("Manual CAR-5", value=0.0, step=0.01, format="%.4f")
+            manual_car10 = st.number_input("Manual CAR-10", value=0.0, step=0.01, format="%.4f")
+        else:
+            manual_car1 = manual_car5 = manual_car10 = 0.0
 
     with input_col:
         uploaded = st.file_uploader("Upload transcript file (PDF or TXT)", type=["pdf", "txt"])
@@ -588,9 +654,12 @@ with tab_predict:
             else:
                 signal, risk, explanation = probability_label(prob)
                 p1, p2, p3 = st.columns(3)
-                p1.metric("Probability of Positive CAR+5", f"{prob:.1%}")
-                p2.metric("Expected Reaction", signal)
-                p3.metric("Risk Level", risk)
+                with p1:
+                    prediction_card("Probability of Positive CAR+5", f"{prob:.1%}", "Prediction target")
+                with p2:
+                    prediction_card("Expected Reaction", signal, "Direction of expected post-call reaction")
+                with p3:
+                    prediction_card("Risk Level", risk, "Based on model confidence")
                 st.write(explanation)
                 st.caption(
                     f"Model: {selected_model_name}. Prediction is based on patterns learned from the historical earnings call sample."
